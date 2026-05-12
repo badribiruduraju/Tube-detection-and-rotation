@@ -1,0 +1,8 @@
+path: /home/yuki/zeon/Tube-detection-and-rotation/yolo_pose_dataset
+train: images/train
+val: images/val
+
+names:
+  0: tube
+
+kpt_shape: [2, 3]
