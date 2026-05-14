@@ -30,7 +30,6 @@ class TubePoseDetector:
                 
                 # Calculate angle using atan2
                 # dy is flipped (kp1_y - kp2_y) because image Y-coordinates go DOWN, 
-                # but standard math Y-coordinates go UP.
                 dx = kp2_x - kp1_x
                 dy = kp1_y - kp2_y 
                 
@@ -49,6 +48,9 @@ class TubePoseDetector:
         return predictions
 
     def visualize(self, image_path, predictions,output_path):
+        '''
+        write predictions on image and send to output_path
+        '''
         img = cv2.imread(image_path)
         
         for pred in predictions:
@@ -76,6 +78,9 @@ def evaluate_entire_dataset(detector, csv_path, img_dir, distance_threshold=20.0
     Evaluates the model across the entire dataset calculating Precision, 
     Recall, F1-Score, and Mean Angle Error.
     """
+    out_dir = 'output'
+    img_dir = 'data/images'
+    csv_path = 'data/annotations.csv'
     df = pd.read_csv(csv_path)
     unique_imgs = df['image'].unique()
     
@@ -83,20 +88,27 @@ def evaluate_entire_dataset(detector, csv_path, img_dir, distance_threshold=20.0
     total_fp = 0
     total_fn = 0
     angle_errors = []
-    
+    center_errors = []
+
     print(f"Evaluating {len(unique_imgs)} images...")
     
     for img_name in unique_imgs:
         img_path = f"{img_dir}/{img_name}"
         
-        # 1. Get Ground Truth for this image
+        # Get Ground Truth
         gt_subset = df[df['image'] == img_name]
         gt_centers = gt_subset[['center_x', 'center_y']].values
         gt_angles = gt_subset['angle_deg'].values
         
-        # 2. Get Predictions
+        # Get Predictions
         preds = detector.predict(img_path)
-        
+                
+        # send prdictions to output
+        for i, p in enumerate(preds):
+            print(f"Tube {i+1}: Center=({p['center_x']:.1f}, {p['center_y']:.1f}), Angle={p['angle_deg']:.1f}°")
+            
+        detector.visualize(img_path, preds, output_path=os.path.join(out_dir,img_name))
+
         if len(preds) == 0:
             total_fn += len(gt_centers)
             continue
@@ -108,47 +120,46 @@ def evaluate_entire_dataset(detector, csv_path, img_dir, distance_threshold=20.0
             total_fp += len(preds)
             continue
             
-        # 3. Create a Cost Matrix (Euclidean distance between every GT and Prediction)
+        # Create a Cost Matrix (Euclidean distance between every GT and Prediction)
         cost_matrix = np.zeros((len(gt_centers), len(pred_centers)))
         for i, gt_c in enumerate(gt_centers):
             for j, pr_c in enumerate(pred_centers):
                 cost_matrix[i, j] = math.hypot(gt_c[0] - pr_c[0], gt_c[1] - pr_c[1])
                 
-        # 4. Use Hungarian Algorithm to find the optimal 1-to-1 matching
+        # Hungarian matching
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
         
         matched_gt = set()
         matched_pred = set()
         
-        # 5. Classify matches as TP based on distance threshold
+        # Classify matches as TP based on distance threshold
         for gt_idx, pred_idx in zip(row_ind, col_ind):
             dist = cost_matrix[gt_idx, pred_idx]
             
             if dist <= distance_threshold:
-                # It's a match! (True Positive)
+
                 total_tp += 1
                 matched_gt.add(gt_idx)
                 matched_pred.add(pred_idx)
                 
-                # Calculate Circular Angle Error ONLY for True Positives
+
                 true_a = gt_angles[gt_idx]
                 pred_a = pred_angles[pred_idx]
                 diff = abs(true_a - pred_a)
                 ang_err = min(diff, 360 - diff)
                 angle_errors.append(ang_err)
-                
-        # 6. Tally up the Unmatched
-        # Any prediction not paired is a False Positive
+                center_errors.append(dist)
+
         total_fp += len(pred_centers) - len(matched_pred)
-        # Any ground truth not paired is a False Negative
+
         total_fn += len(gt_centers) - len(matched_gt)
         
-    # --- Final Math ---
     precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
     recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
     f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
     mean_angle_err = np.mean(angle_errors) if len(angle_errors) > 0 else 0.0
-    
+    mean_centers_err = np.mean(center_errors) if len(center_errors) > 0 else 0.0
+
     return {
         'Precision': precision,
         'Recall': recall,
@@ -156,40 +167,30 @@ def evaluate_entire_dataset(detector, csv_path, img_dir, distance_threshold=20.0
         'Mean_Angle_Error': mean_angle_err,
         'Total_TP': total_tp,
         'Total_FP': total_fp,
-        'Total_FN': total_fn
+        'Total_FN': total_fn,
+        'Mean_Centers_Error': mean_centers_err
     }
 
 
 if __name__ == "__main__":
     detector = TubePoseDetector()
-    img_dir = 'data/images/'
     csv_path = 'data/annotations.csv'
-    # Swap with a real image from your dataset
-    df = pd.read_csv(ANNOTATIONS_CSV)
-    unique_img = df['image'].unique()
-    print(unique_img[0])
-    for img in unique_img:
-        preds = detector.predict(f"{img_dir}{img}")
-        
-        for i, p in enumerate(preds):
-            print(f"Tube {i+1}: Center=({p['center_x']:.1f}, {p['center_y']:.1f}), Angle={p['angle_deg']:.1f}°")
-            
-        detector.visualize(f"{img_dir}{img}", preds, output_path=f"output/{img}")
-    
-    # Run the comprehensive evaluation
+    img_dir = 'data/images'
+
     # Threshold is 20 pixels (roughly half the width of a tube lid)
     results = evaluate_entire_dataset(detector, csv_path, img_dir, distance_threshold=20.0)
     
     print("\n" + "="*40)
     print("      FINAL DATASET EVALUATION")
     print("="*40)
-    print(f"Total True Positives (Found):  {results['Total_TP']}")
-    print(f"Total False Positives (Ghost): {results['Total_FP']}")
-    print(f"Total False Negatives (Miss):  {results['Total_FN']}")
+    print(f"Total True Positives:   {results['Total_TP']}")
+    print(f"Total False Positives:  {results['Total_FP']}")
+    print(f"Total False Negatives:  {results['Total_FN']}")
     print("-" * 40)
     print(f"Precision:         {results['Precision']:.4f}")
     print(f"Recall:            {results['Recall']:.4f}")
     print(f"F1-Score:          {results['F1_Score']:.4f}")
     print("-" * 40)
-    print(f"Mean Angle Error:  {results['Mean_Angle_Error']:.2f} degrees")
+    print(f"Mean Angle Error:      {results['Mean_Angle_Error']:.2f} degrees")
+    print(f"Mean Centers Error:    {results['Mean_Centers_Error']:.2f} px")
     print("="*40)

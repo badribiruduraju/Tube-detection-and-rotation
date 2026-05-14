@@ -56,8 +56,7 @@ def convert_and_split_data(test_size=0.15, img_w=640, img_h=480):
                     
                     # Format: class bbox_cx bbox_cy w h kp1_x kp1_y vis1 kp2_x kp2_y vis2
                     # Visibility flag '2' means visible and labeled
-                    line = f"0 {bbox_cx:.5f} {bbox_cy:.5f} {norm_w:.5f} {norm_h:.5f} " \
-                           f"{kp1_x:.5f} {kp1_y:.5f} 2 {kp2_x:.5f} {kp2_y:.5f} 2\n"
+                    line = f"0 {bbox_cx:.5f} {bbox_cy:.5f} {norm_w:.5f} {norm_h:.5f} {kp1_x:.5f} {kp1_y:.5f} 2 {kp2_x:.5f} {kp2_y:.5f} 2\n"
                     f.write(line)
 
     process_split(train_imgs, 'train')
